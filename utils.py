@@ -115,8 +115,10 @@ class ngsimDataset(Dataset):
         for _,_,nbrs,_,_,_ in samples:
             nbr_batch_size += sum([len(nbrs[i])!=0 for i in range(len(nbrs))])
         maxlen = self.t_h//self.d_s + 1
-        #print(maxlen,nbr_batch_size,2)
-        nbrs_batch = torch.zeros(maxlen,nbr_batch_size,2)
+        if nbr_batch_size > 0:
+            nbrs_batch = torch.zeros(maxlen,nbr_batch_size,2)
+        else:
+            nbrs_batch = torch.Tensor()
 
 
         # Initialize social mask batch:
