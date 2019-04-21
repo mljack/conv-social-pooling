@@ -33,6 +33,7 @@ class ngsimDataset(Dataset):
         t = self.D[idx, 2]
         grid = self.D[idx,8:]
         neighbors = []
+        neighbors_fur = []
 
         # Get track history 'hist' = ndarray, and future track 'fut' = ndarray
         hist = self.getHistory(vehId,t,vehId,dsId)
@@ -40,7 +41,8 @@ class ngsimDataset(Dataset):
 
         # Get track histories of all neighbours 'neighbors' = [ndarray,[],ndarray,ndarray]
         for i in grid:
-            neighbors.append(self.getHistory(i.astype(int), t,vehId,dsId))
+            neighbors.append(self.getHistory(i.astype(int),t,vehId,dsId))
+            neighbors_fur.append(self.getFuture2(i.astype(int),t,vehId,dsId))
 
         # Maneuvers 'lon_enc' = one-hot vector, 'lat_enc = one-hot vector
         lon_enc = np.zeros([2])
@@ -48,7 +50,7 @@ class ngsimDataset(Dataset):
         lat_enc = np.zeros([3])
         lat_enc[int(self.D[idx, 6] - 1)] = 1
 
-        return hist,fut,neighbors,lat_enc,lon_enc
+        return hist,fut,neighbors,neighbors_fur,lat_enc,lon_enc
 
 
 
@@ -74,7 +76,25 @@ class ngsimDataset(Dataset):
                 return np.empty([0,2])
             return hist
 
-
+    ## Helper function to get track future
+    def getFuture2(self, vehId, t, refVehId, dsId):
+        if vehId == 0:
+            return np.empty([0,2])
+        else:
+            if self.T.shape[1]<=vehId-1:
+                return np.empty([0,2])
+            refTrack = self.T[dsId-1][refVehId-1].transpose()
+            vehTrack = self.T[dsId-1][vehId-1].transpose()
+            refPos = refTrack[np.where(refTrack[:,0]==t)][0,1:3]
+            if vehTrack.size==0 or np.argwhere(vehTrack[:, 0] == t).size==0:
+                 return np.empty([0,2])
+            else:
+                stpt = np.argwhere(vehTrack[:, 0] == t).item() + self.d_s
+                enpt = np.minimum(len(vehTrack), np.argwhere(vehTrack[:, 0] == t).item() + self.t_f + 1)
+                fut = vehTrack[stpt:enpt:self.d_s,1:3]-refPos
+            if len(fut) < self.t_h//self.d_s + 1:
+                return np.empty([0,2])
+            return fut
 
     ## Helper function to get track future
     def getFuture(self, vehId, t,dsId):
@@ -92,9 +112,10 @@ class ngsimDataset(Dataset):
 
         # Initialize neighbors and neighbors length batches:
         nbr_batch_size = 0
-        for _,_,nbrs,_,_ in samples:
+        for _,_,nbrs,_,_,_ in samples:
             nbr_batch_size += sum([len(nbrs[i])!=0 for i in range(len(nbrs))])
         maxlen = self.t_h//self.d_s + 1
+        #print(maxlen,nbr_batch_size,2)
         nbrs_batch = torch.zeros(maxlen,nbr_batch_size,2)
 
 
@@ -112,8 +133,9 @@ class ngsimDataset(Dataset):
         lon_enc_batch = torch.zeros(len(samples), 2)
 
 
+        nbrs_fur_batch = []
         count = 0
-        for sampleId,(hist, fut, nbrs, lat_enc, lon_enc) in enumerate(samples):
+        for sampleId, (hist, fut, nbrs, nbrs_fur, lat_enc, lon_enc) in enumerate(samples):
 
             # Set up history, future, lateral maneuver and longitudinal maneuver batches:
             hist_batch[0:len(hist),sampleId,0] = torch.from_numpy(hist[:, 0])
@@ -123,9 +145,10 @@ class ngsimDataset(Dataset):
             op_mask_batch[0:len(fut),sampleId,:] = 1
             lat_enc_batch[sampleId,:] = torch.from_numpy(lat_enc)
             lon_enc_batch[sampleId, :] = torch.from_numpy(lon_enc)
+            nbrs_fur_batch.append(nbrs_fur)
 
             # Set up neighbor, neighbor sequence length, and mask batches:
-            for id,nbr in enumerate(nbrs):
+            for id, nbr in enumerate(nbrs):
                 if len(nbr)!=0:
                     nbrs_batch[0:len(nbr),count,0] = torch.from_numpy(nbr[:, 0])
                     nbrs_batch[0:len(nbr), count, 1] = torch.from_numpy(nbr[:, 1])
@@ -134,7 +157,7 @@ class ngsimDataset(Dataset):
                     mask_batch[sampleId,pos[1],pos[0],:] = torch.ones(self.enc_size).byte()
                     count+=1
 
-        return hist_batch, nbrs_batch, mask_batch, lat_enc_batch, lon_enc_batch, fut_batch, op_mask_batch
+        return hist_batch, nbrs_batch, nbrs_fur_batch, mask_batch, lat_enc_batch, lon_enc_batch, fut_batch, op_mask_batch
 
 #________________________________________________________________________________________________________________________________________
 
